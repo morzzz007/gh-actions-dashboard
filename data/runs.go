@@ -3,6 +3,7 @@ package data
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/cli/go-gh"
@@ -40,17 +41,34 @@ func GetWorkflowRuns(repoPaths []string) []WorkflowRun {
 		return nil
 	}
 
-	wFlows := make([]WorkflowRun, 0)
+	var wg sync.WaitGroup
+	responses := make(chan []WorkflowRun, len(repoPaths))
 
 	for _, repoPath := range repoPaths {
-		var resp response
-		url := fmt.Sprintf("repos/%s/actions/runs?per_page=5", repoPath)
-		err = client.Get(url, &resp)
-		if err != nil {
-			fmt.Println(err)
-			return nil
-		}
-		wFlows = append(wFlows, resp.WorkflowRuns...)
+		wg.Add(1)
+
+		repoPath := repoPath
+
+		go func() {
+			defer wg.Done()
+
+			var resp response
+			url := fmt.Sprintf("repos/%s/actions/runs?per_page=5", repoPath)
+			err = client.Get(url, &resp)
+			if err != nil {
+				fmt.Println(err)
+			}
+
+			responses <- resp.WorkflowRuns
+		}()
+	}
+
+	wg.Wait()
+	close(responses)
+
+	wFlows := make([]WorkflowRun, 0)
+	for elem := range responses {
+		wFlows = append(wFlows, elem...)
 	}
 
 	sort.Slice(wFlows, func(i, j int) bool {
